@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>纽约心声中文合唱团</title>
+    <script src="https://unpkg.com/vue@3.3.0/dist/vue.global.prod.js"></script>
+    <script src="https://unpkg.com/vue-router@4.0.0/dist/vue-router.global.prod.js"></script>
+    <script src="https://unpkg.com/pinia@2.0.0/dist/pinia.iife.prod.js"></script>
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <script src="https://unpkg.com/@heroicons/vue@2.0.0/outline/index.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 自定义样式 */
+        .fade-enter-active,
+        .fade-leave-active {
+            transition: opacity 0.3s ease;
+        }
+        .fade-enter-from,
+        .fade-leave-to {
+            opacity: 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <router-view v-slot="{ Component }">
+            <transition name="fade" mode="out-in">
+                <component :is="Component" />
+            </transition>
+        </router-view>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, onMounted, onUnmounted } = Vue
+        const { createRouter, createWebHistory } = VueRouter
+        const { createPinia, defineStore } = Pinia
+
+        // User Store
+        const useUserStore = defineStore('user', {
+            state: () => ({
+                email: null,
+                isAdmin: false,
+                isLoggedIn: false
+            }),
+
+            actions: {
+                login(email, isAdmin) {
+                    this.email = email
+                    this.isAdmin = isAdmin
+                    this.isLoggedIn = true
+                    localStorage.setItem('userState', JSON.stringify({
+                        email,
+                        isAdmin,
+                        isLoggedIn: true
+                    }))
+                },
+
+                logout() {
+                    this.email = null
+                    this.isAdmin = false
+                    this.isLoggedIn = false
+                    localStorage.removeItem('userState')
+                },
+
+                loadStoredState() {
+                    const stored = localStorage.getItem('userState')
+                    if (stored) {
+                        const state = JSON.parse(stored)
+                        this.email = state.email
+                        this.isAdmin = state.isAdmin
+                        this.isLoggedIn = state.isLoggedIn
+                    }
+                }
+            }
+        })
+
+        // Score Store
+        const useScoreStore = defineStore('scores', {
+            state: () => ({
+                scores: []
+            }),
+
+            actions: {
+                async getScoreWithWatermark(score, username) {
+                    try {
+                        const watermarkedPdf = await addWatermark(score.data, username)
+                        return watermarkedPdf
+                    } catch (error) {
+                        console.error('Error getting watermarked score:', error)
+                        return null
+                    }
+                },
+
+                async uploadScore(file) {
+                    try {
+                        const reader = new FileReader()
+                        const fileData = await new Promise((resolve, reject) => {
+                            reader.onload = () => resolve(reader.result)
+                            reader.onerror = reject
+                            reader.readAsArrayBuffer(file)
+                        })
+
+                        const scoreData = {
+                            id: Date.now().toString(),
+                            name: file.name,
+                            data: fileData,
+                            uploadDate: new Date().toISOString()
+                        }
+
+                        this.scores.push(scoreData)
+                        this.saveScores()
+                        return true
+                    } catch (error) {
+                        console.error('Error uploading score:', error)
+                        return false
+                    }
+                },
+
+                saveScores() {
+                    const metaData = this.scores.map(({ id, name, uploadDate }) => ({
+                        id,
+                        name,
+                        uploadDate
+                    }))
+                    localStorage.setItem('scores', JSON.stringify(metaData))
+                },
+
+                loadScores() {
+                    const stored = localStorage.getItem('scores')
+                    if (stored) {
+                        this.scores = JSON.parse(stored)
+                    }
+                }
+            }
+        })
+
+        // PDF Watermark Utility
+        async function addWatermark(pdfBytes, username) {
+            try {
+                const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes)
+                const helveticaFont = await pdfDoc.embedFont(PDFLib.StandardFonts.Helvetica)
+                const pages = pdfDoc.getPages()
+
+                for (const page of pages) {
+                    const { width, height } = page.getSize()
+                    
+                    const mainText = `${username} 正在查阅乐谱`
+                    const mainFontSize = 60
+                    const mainTextWidth = helveticaFont.widthOfTextAtSize(mainText, mainFontSize)
+                    
+                    const subText = '本乐谱由纽约心声合唱团授权或持有版权，严禁截图或未经许可传播。'
+                    const subFontSize = 20
+                    const subTextWidth = helveticaFont.widthOfTextAtSize(subText, subFontSize)
+
+                    page.pushOperators()
+                    page.setFont(helveticaFont)
+                    page.saveGraphicsState()
+                    page.translateContent(width / 2, height / 2)
+                    page.rotateContent(-45 * Math.PI / 180)
+                    
+                    page.drawText(mainText, {
+                        x: -mainTextWidth / 2,
+                        y: 0,
+                        size: mainFontSize,
+                        color: PDFLib.rgb(0, 0, 0),
+                        opacity: 0.3,
+                    })
+                    
+                    page.drawText(subText, {
+                        x: -subTextWidth / 2,
+                        y: -mainFontSize,
+                        size: subFontSize,
+                        color: PDFLib.rgb(0, 0, 0),
+                        opacity: 0.3,
+                    })
+                    
+                    page.restoreGraphicsState()
+                }
+
+                return await pdfDoc.save()
+            } catch (error) {
+                console.error('Error adding watermark:', error)
+                throw error
+            }
+        }
+
+        // 登录视图组件
+        const LoginView = {
+            template: `
+                <div class="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+                    <div class="max-w-md w-full space-y-8">
+                        <div>
+                            <h2 class="mt-6 text-center text-3xl font-extrabold text-gray-900">
+                                纽约心声中文合唱团
+                            </h2>
+                        </div>
+                        <form class="mt-8 space-y-6" @submit.prevent="handleLogin">
+                            <!-- Email输入 -->
+                            <div>
+                                <label for="email" class="sr-only">Email Address</label>
+                                <input
+                                    id="email"
+                                    v-model="email"
+                                    type="email"
+                                    required
+                                    class="appearance-none rounded-md relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                                    placeholder="Email Address"
+                                />
+                            </div>
+
+                            <!-- 管理员模式开关 -->
+                            <div class="flex items-center">
+                                <input
+                                    id="admin-mode"
+                                    v-model="isAdminMode"
+                                    type="checkbox"
+                                    class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                />
+                                <label for="admin-mode" class="ml-2 block text-sm text-gray-900">
+                                    Admin Login
+                                </label>
+                            </div>
+
+                            <!-- 管理员验证码输入 -->
+                            <div v-if="isAdminMode">
+                                <label for="admin-code" class="sr-only">Admin Code</label>
+                                <input
+                                    id="admin-code"
+                                    v-model="adminCode"
+                                    type="password"
+                                    class="appearance-none rounded-md relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                                    placeholder="Admin Code"
+                                />
+                            </div>
+
+                            <!-- 登录按钮 -->
+                            <div>
+                                <button
+                                    type="submit"
+                                    :disabled="!isValid"
+                                    class="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400"
+                                >
+                                    登录
+                                </button>
+                            </div>
+                        </form>
+
+                        <!-- 错误提示 -->
+                        <div v-if="error" class="mt-2 text-red-600 text-sm text-center">
+                            {{ error }}
+                        </div>
+                    </div>
+                </div>
+            `,
+            setup() {
+                const userStore = useUserStore()
+                const router = useRouter()
+
+                const email = ref('')
+                const isAdminMode = ref(false)
+                const adminCode = ref('')
+                const error = ref('')
+
+                const isValid = computed(() => {
+                    if (!email.value) return false
+                    if (isAdminMode.value && !adminCode.value) return false
+                    return true
+                })
+
+                const handleLogin = async () => {
+                    error.value = ''
+                    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+                    if (!emailRegex.test(email.value)) {
+                        error.value = '请输入有效的邮箱地址'
+                        return
+                    }
+
+                    try {
+                        if (isAdminMode.value) {
+                            if (adminCode.value === '1215') {
+                                userStore.login(email.value, true)
+                                router.push('/scores')
+                            } else {
+                                error.value = '管理员验证码错误'
+                            }
+                        } else {
+                            const allowedEmails = [
+                                'aryaccl1215@gmail.com',
+                                'conductor@nycheart.org',
+                                'member1@nycheart.org'
+                            ]
+
+                            if (allowedEmails.includes(email.value.toLowerCase())) {
+                                userStore.login(email.value, false)
+                                router.push('/scores')
+                            } else {
+                                error.value = '您的邮箱不在内测白名单中'
+                            }
+                        }
+                    } catch (e) {
+                        error.value = '登录失败，请稍后重试'
+                    }
+                }
+
+                return {
+                    email,
+                    isAdminMode,
+                    adminCode,
+                    error,
+                    isValid,
+                    handleLogin
+                }
+            }
+        }
+
+        // 乐谱视图组件
+        const ScoreView = {
+            template: `
+                <div class="max-w-3xl mx-auto px-4 py-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h1 class="text-2xl font-bold text-gray-900">乐谱库</h1>
+                        
+                        <!-- 管理员上传按钮 -->
+                        <button
+                            v-if="userStore.isAdmin"
+                            @click="showUploadDialog = true"
+                            class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                        >
+                            上传乐谱
+                        </button>
+                    </div>
+
+                    <!-- 乐谱列表 -->
+                    <div class="bg-white shadow overflow-hidden sm:rounded-md">
+                        <ul class="divide-y divide-gray-200">
+                            <li v-for="score in scoreStore.scores" :key="score.id">
+                                <div class="px-4 py-4 flex items-center justify-between sm:px-6">
+                                    <div class="flex items-center">
+                                        <div class="ml-3">
+                                            <p class="text-sm font-medium text-gray-900">{{ score.name }}</p>
+                                            <p class="text-sm text-gray-500">
+                                                上传时间：{{ formatDate(score.uploadDate) }}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="flex items-center space-x-2">
+                                        <button
+                                            @click="viewScore(score)"
+                                            class="inline-flex items-center px-3 py-1 border border-transparent text-sm font-medium rounded-md text-blue-700 bg-blue-100 hover:bg-blue-200"
+                                        >
+                                            查看
+                                        </button>
+                                    </div>
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- 上传对话框 -->
+                    <div v-if="showUploadDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+                        <div class="bg-white rounded-lg max-w-md w-full p-6">
+                            <h3 class="text-lg font-medium mb-4">上传乐谱</h3>
+                            <input
+                                type="file"
+                                accept="application/pdf"
+                                @change="handleFileSelect"
+                                class="mb-4"
+                            >
+                            <div class="flex justify-end space-x-3">
+                                <button
+                                    @click="showUploadDialog = false"
+                                    class="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-md"
+                                >
+                                    取消
+                                </button>
+                                <button
+                                    @click="uploadFile"
+                                    class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md"
+                                >
+                                    上传
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- PDF查看器 -->
+                    <div v-if="showPdfViewer" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+                        <div class="bg-white w-full h-full max-w-4xl max-h-[90vh] p-4 rounded-lg flex flex-col">
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="text-lg font-medium">{{ currentScore?.name }}</h3>
+                                <button
+                                    @click="closePdfViewer"
+                                    class="text-gray-500 hover:text-gray-700"
+                                >
+                                    关闭
+                                </button>
+                            </div>
+                            <iframe
+                                v-if="pdfUrl"
+                                :src="pdfUrl"
+                                class="flex-1 w-full rounded-md"
+                            ></iframe>
+                        </div>
+                    </div>
+                </div>
+            `,
+            setup() {
+                const userStore = useUserStore()
+                const scoreStore = useScoreStore()
+                const router = useRouter()
+
+                const showUploadDialog = ref(false)
+                const showPdfViewer = ref(false)
+                const selectedFile = ref(null)
+                const currentScore = ref(null)
+                const pdfUrl = ref(null)
+
+                onMounted(() => {
+                    scoreStore.loadScores()
+                })
+
+                const handleFileSelect = (event) => {
+                    const file = event.target.files[0]
+                    if (file && file.type === 'application/pdf') {
+                        selectedFile.value = file
+                    } else {
+                        alert('请选择PDF文件')
+                    }
+                }
+
+                const uploadFile = async () => {
+                    if (!selectedFile.value) return
+
+                    const success = await scoreStore.uploadScore(selectedFile.value)
+                    if (success) {
+                        showUploadDialog.value = false
+                        selectedFile.value = null
+                    } else {
+                        alert('上传失败，请重试')
+                    }
+                }
+
+                const viewScore = async (score) => {
+                    currentScore.value = score
+                    const watermarkedPdf = await scoreStore.getScoreWithWatermark(score, userStore.email)
+                    if (!watermarkedPdf) {
+                        alert('无法加载PDF')
+                        return
+                    }
+                    const blob = new Blob([watermarkedPdf], { type: 'application/pdf' })
+                    pdfUrl.value = URL.createObjectURL(blob)
+                    showPdfViewer.value = true
+                }
+
+                const closePdfViewer = () => {
+                    showPdfViewer.value = false
+                    if (pdfUrl.value) {
+                        URL.revokeObjectURL(pdfUrl.value)
+                        pdfUrl.value = null
+                    }
+                }
+
+                const formatDate = (dateString) => {
+                    return new Date(dateString).toLocaleString('zh-CN', {
+                        year: 'numeric',
+                        month: 'numeric',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    })
+                }
+
+                onUnmounted(() => {
+                    if (pdfUrl.value) {
+                        URL.revokeObjectURL(pdfUrl.value)
+                    }
+                })
+
+                return {
+                    userStore,
+                    scoreStore,
+                    showUploadDialog,
+                    showPdfViewer,
+                    currentScore,
+                    pdfUrl,
+                    handleFileSelect,
+                    uploadFile,
+                    viewScore,
+                    closePdfViewer,
+                    formatDate
+                }
+            }
+        }
+
+        // 路由配置
+        const router = createRouter({
+            history: createWebHistory(),
+            routes: [
+                {
+                    path: '/',
+                    component: LoginView
+                },
+                {
+                    path: '/scores',
+                    component: ScoreView,
+                    meta: { requiresAuth: true }
+                }
+            ]
+        })
+
+        // 导航守卫
+        router.beforeEach((to, from, next) => {
+            const userStore = useUserStore()
+            
+            if (to.meta.requiresAuth && !userStore.isLoggedIn) {
+                next('/')
+            } else {
+                next()
+            }
+        })
+
+        // 创建并挂载应用
+        const app = createApp({})
+        const pinia = createPinia()
+
+        app.use(pinia)
+        app.use(router)
+        app.mount('#app')
+
+        // 加载存储的用户状态
+        const userStore = useUserStore()
+        userStore.loadStoredState()
+    </script>
+</body>
+</html> 
