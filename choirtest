@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>纽约心声中文合唱团</title>
+    <!-- 引入必要的 CDN 依赖 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/vue-router@4"></script>
+    <script src="https://unpkg.com/pinia"></script>
+    <script src="https://unpkg.com/pdf-lib"></script>
+    <script src="https://unpkg.com/@heroicons/vue@2.0.0/24/outline"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    <div id="app"></div>
+
+    <script>
+        // 这里放置应用代码
+        const { createApp, ref, computed, onMounted } = Vue
+        const { createRouter, createWebHistory } = VueRouter
+        const { createPinia, defineStore } = Pinia
+
+        // 在这里放置所有的组件和存储代码
+        // ...
+
+        // 创建应用实例
+        const app = createApp({
+            // 应用代码
+        })
+
+        // 挂载应用
+        app.use(createPinia())
+        app.use(router)
+        app.mount('#app')
+    </script>
+</body>
+</html> 
